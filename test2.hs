@@ -5,19 +5,22 @@ import HQueries.Sqlite
 import HQueries.TH
 import Data.Text (Text)
 
+import HQueries.Internal
+
 data Session = Session{user :: Text, secret :: Text} deriving Show
 
-sessions :: Entity Session
-sessions = Entity "sessions"
-
 $(deriveQType ''Session)
+
+sessions :: EntityRW [Session]
+sessions = EntityRW "sessions"
 
 
 main :: IO ()
 main = do
     backend <- createSqliteBackend "test.db"
-
-    let q = toQuery $ Session "coiso" "coiso" -- queryEntity sessions
-    putStrLn $ show $ getBackendCode backend q
-    res <- hQuery backend $ q
+    migrateSchema backend [Entity sessions]
+    -- let q = toQuery $ Session "coiso" "coiso" 
+    let a = getEntity sessions -- return q
+    putStrLn $ show $ getBackendCode backend (a)
+    res <- hQuery backend $ a
     putStrLn $ show res

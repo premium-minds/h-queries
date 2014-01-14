@@ -5,11 +5,14 @@ module HQueries.TH(
 
 import Language.Haskell.TH
 import HQueries.Internal
+import Data.Text (Text)
 
+con2ArgTypes :: Con -> [Type] 
+con2ArgTypes (NormalC _ subs) = map (\(_,x) -> x) subs 
+con2ArgTypes (RecC _ subs) = map (\(_,_,x) -> x) subs 
 
 con2Vars :: String -> Con -> Q [Name]
-con2Vars z (NormalC _ subs) = mapM (\_ -> newName z) subs 
-con2Vars z (RecC _ subs) = mapM (\_ -> newName z) subs 
+con2Vars z c = mapM (\_ -> newName z) (con2ArgTypes c) 
 
 
 con2Name :: Con -> Name
@@ -43,6 +46,16 @@ con2clause_parseQueryRes c = do
         )
         []
 
+type2QTypeRep :: Type -> ExpQ -- QTypeRep
+type2QTypeRep (ConT x) | x == ''Integer = [|QTypeRepInt|]
+type2QTypeRep (ConT x) | x == ''Text = [|QTypeRepText|]
+
+con2clause_getQTypeRep :: Con -> ClauseQ
+con2clause_getQTypeRep c =
+    clause
+        [wildP]
+        (normalB $ appE (conE 'QTypeRepProd) (listE $ map type2QTypeRep $ con2ArgTypes c ) )
+        []
 
 applyArgs :: ExpQ -> [ExpQ] -> ExpQ
 applyArgs f args = foldr (\a l -> appE l a) f args
@@ -59,6 +72,9 @@ deriveQType tyName = do
                     ],
                     funD 'parseQueryRes [
                         con2clause_parseQueryRes con
+                    ],
+                    funD 'getQTypeRep [
+                        con2clause_getQTypeRep con
                     ]
                 ]
     return [iDec]
