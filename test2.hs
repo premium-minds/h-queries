@@ -19,8 +19,14 @@ main :: IO ()
 main = do
     backend <- createSqliteBackend "test.db"
     migrateSchema backend [Entity sessions]
-    -- let q = toQuery $ Session "coiso" "coiso" 
-    let a = getEntity sessions -- return q
-    putStrLn $ show $ getBackendCode backend (a)
-    res <- hQuery backend $ a
-    putStrLn $ show res
+
+    let dostuff x = do
+        putStrLn $ show $ getBackendCode backend x
+        res <- hQuery backend x
+        putStrLn $ show res
+
+    let a = getEntity sessions
+    dostuff (return $ toQuery $ Session "1" "2")
+    hQuery backend $ append (toQuery $ Session "ola" "ola") sessions
+
+    dostuff a

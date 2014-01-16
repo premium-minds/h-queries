@@ -22,6 +22,7 @@ queryToSQL (ASTPlusInt x y) = T.concat ["select (", queryToSQL x, ")+(", queryTo
 queryToSQL ASTVar = "x1"
 queryToSQL (ASTGetEntity ref) = T.concat ["select * from ", entityGetBackendName' ref] 
 queryToSQL (ASTQMap f lx) = T.concat ["select (", (queryToSQL $ f ASTVar), ") from (", queryToSQL lx, ")"]
+queryToSQL (ASTAppendEntity x ref) = T.concat ["insert into ", entityGetBackendName' ref, " ", queryToSQL x]
 
 hqio2Sql :: HQIO (Query a) -> Text
 hqio2Sql x = queryToSQL $ fst $ runState x HQIOState
