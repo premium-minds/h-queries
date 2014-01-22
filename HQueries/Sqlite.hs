@@ -21,15 +21,21 @@ createSqliteBackend :: FilePath -> IO SqliteBackend
 createSqliteBackend s = SqliteBackend `fmap` Sqlite.connectSqlite3 s
 
 instance QBackend SqliteBackend where
-    getBackendCode _ q = hqio2Sql q
+    getBackendCode _ q = T.intercalate ";\n" $ reverse $ hqio2Sql q
     
     hQuery b@(SqliteBackend conn) q = do
-        res <- quickQuery' conn (T.unpack $ getBackendCode b q) []
+        let stms = map T.unpack $ hqio2Sql q
+        forM_ (reverse $ tail stms) $ \x -> do
+            st <- prepare conn x
+            executeRaw st
+        res <-  quickQuery' conn (head stms) []
+        commit conn
         return $ fst $ parseQueryRes $ sqlValue2QueryRawRes res
 
     migrateSchema b@(SqliteBackend conn) l = do
         forM_ l $ \(EntityObj x) -> do
-            let sql = entity2migration x
+            let (create, init) = entity2migration x
+            let sql = create `T.append` init
             tInfo <- quickQuery' conn "SELECT sql FROM sqlite_master WHERE type='table' and name = ?" [SqlString $ T.unpack $ entityGetBackendName x]
             case tInfo of
                 [] -> do
@@ -37,7 +43,7 @@ instance QBackend SqliteBackend where
                     runRaw conn (T.unpack sql)
                     commit conn
                 [[SqlByteString bs]] -> do
-                    if sql == (TE.decodeUtf8 bs `T.append` ";") then
+                    if create == (TE.decodeUtf8 bs `T.append` ";") then
                         return ()
                         else
                             error $ T.unpack $ T.concat["table ", entityGetBackendName x, " with wrong schema"]

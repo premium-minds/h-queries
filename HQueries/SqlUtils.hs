@@ -13,50 +13,64 @@ import qualified Data.Text as T
 
 import Control.Monad.State
 
-queryToSQL :: Query a -> Text
-queryToSQL (ASTTextLit t) = T.concat ["select '", T.replace "'" "''" t, "'"]
-queryToSQL (ASTProdTypeLit l) = "select " `T.append` T.intercalate ", " (map (\(QTypeObj x) -> T.concat["(", queryToSQL $ toQuery x, ")"])  l) 
-queryToSQL (ASTListLit l) = T.intercalate " union all " ((queryToSQL . toQuery) `map` l )
-queryToSQL (ASTIntLit i) = T.concat ["select ", T.pack $ show i]
-queryToSQL (ASTPlusInt x y) = T.concat ["select (", queryToSQL x, ")+(", queryToSQL y, ")"]
-queryToSQL ASTVar = "x1"
-queryToSQL (ASTGetEntity ref) = T.concat ["select * from ", entityGetBackendName ref] 
-queryToSQL (ASTQMap f lx) = T.concat ["select (", (queryToSQL $ f ASTVar), ") from (", queryToSQL lx, ")"]
-queryToSQL (ASTInsertEntity x ref) = T.concat ["insert into ", entityGetBackendName ref, " ", queryToSQL x]
+queryToSQL :: Query a -> [Text]
+queryToSQL (ASTTextLit t) = [T.concat ["select '", T.replace "'" "''" t, "'"]]
+queryToSQL (ASTProdTypeLit l) = ["select " `T.append` T.intercalate ", " (map (\(QTypeObj x) -> T.concat["(", head $ queryToSQL $ toQuery x, ")"])  l)]
+queryToSQL (ASTListLit l) = [T.intercalate " union all " ((head . queryToSQL . toQuery) `map` l )]
+queryToSQL (ASTIntLit i) = [T.concat ["select ", T.pack $ show i]]
+queryToSQL (ASTPlusInt x y) = [T.concat ["select (", head $ queryToSQL x, ")+(", head $ queryToSQL y, ")"]]
+queryToSQL ASTVar = ["x1"]
+queryToSQL (ASTGetEntity ref) = [T.concat ["select * from ", entityGetBackendName ref]]
+queryToSQL (ASTQMap f lx) = [T.concat ["select (", (head $ queryToSQL $ f ASTVar), ") from (", head $ queryToSQL lx, ")"]]
+queryToSQL (ASTInsertEntity x ref) = [T.concat ["insert into ", entityGetBackendName ref, " ", head $ queryToSQL x]]
+queryToSQL (ASTInsertEntityMapAK x ref) = ["SELECT last_insert_rowid()", T.concat[
+                                                  "insert into "
+                                                , entityGetBackendName ref
+                                                , "("
+                                                , T.intercalate "," (mkListColumnsNamesInsertMapAK $ queryGetQTypeRep x)
+                                                , ") "
+                                                , head $ queryToSQL x
+                                                ]]
 
-hqio2Sql :: HQIO (Query a) -> Text
+hqio2Sql :: HQIO (Query a) -> [Text]
 hqio2Sql x = queryToSQL $ fst $ runState x HQIOState
 
-flatQTypeRep :: QTypeRep -> QTypeRep
-flatQTypeRep (QTypeRepProd l) = QTypeRepProd $ map flatQTypeRep l
-flatQTypeRep (QTypeRepList x) = QTypeRepList $ flatQTypeRep x
-flatQTypeRep o = o
-
-prepareQTypeRep :: QTypeRep -> QTypeRep
-prepareQTypeRep (QTypeRepList l) = l
-prepareQTypeRep x = x
 
 mkListColumns :: QTypeRep -> [Text]
 mkListColumns (QTypeRepProd l) = concatMap mkListColumns l
 mkListColumns (QTypeRepNewType x) = mkListColumns x
-mkListColumns (QTypeRepMap k v) = mkListColumns k ++ mkListColumns v
 mkListColumns QTypeRepInt = ["INT"]
 mkListColumns QTypeRepText = ["TEXT"]
 
+mkListColumnsCount :: QTypeRep -> Int
+mkListColumnsCount (QTypeRepProd l) = sum $ map mkListColumnsCount l
+mkListColumnsCount (QTypeRepNewType x) = mkListColumnsCount x
+mkListColumnsCount QTypeRepInt = 1
+mkListColumnsCount QTypeRepText = 1
+mkListColumnsCount o = error $ "can't make column list for " ++ show o
 
-entity2migration :: Entity a b c -> Text
+mkAllNames = (map (\i -> T.pack $ "x" ++ show i) [1..])
+
+mkListColumnsNamesInsertMapAK x = take (mkListColumnsCount x) (tail mkAllNames)
+
+entity2migration :: Entity a b c -> (Text,Text)
 entity2migration x =
     let
-        p0 = entityGetQTypeRep x
-        p1 = flatQTypeRep p0
-        p2 = prepareQTypeRep p1
-        pl = map (\(n, t) -> T.concat [n," ",t] ) $ (map (\i -> T.pack $ "x" ++ show i) [1..]) `zip` mkListColumns p2
+        tpRep = entityGetQTypeRep x
+        names = mkAllNames
+        tname = entityGetBackendName x
+        (cols,stms) = case tpRep of
+            QTypeRepList l -> (names `zip` mkListColumns l, [])
+            QTypeRepMap k v -> (names `zip` ("INTEGER PRIMARY KEY AUTOINCREMENT":(mkListColumns v)) , [])
+            QTypeRepInt -> ([("x1","INT")], [T.concat["INSERT INTO ", tname, " VALUES (0)"]])
+        pl = map (\(n, t) -> T.concat [n," ",t] ) $ cols
     in
-        T.concat[ "CREATE TABLE "
-                , entityGetBackendName x
+        (T.concat[ "CREATE TABLE "
+                , tname
                 , " ("
                 , T.intercalate "," pl
                 , ");"]
+        , T.intercalate ";" stms)
 
 
 sqlValue2QueryRawRes :: [[SqlValue]] -> QueryRawRes

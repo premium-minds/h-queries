@@ -28,6 +28,7 @@ import HQueries.TH
 
 instance Num (Query Integer) where
     x + y = ASTPlusInt x y
+    fromInteger i = toQuery i
 
 qmap :: (Query a -> Query b) -> Query [a] -> Query [b]
 qmap f lx = ASTQMap f lx

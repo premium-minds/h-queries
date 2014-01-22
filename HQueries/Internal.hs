@@ -18,6 +18,7 @@ module HQueries.Internal(
     , insertEntity
     , insertEntityMapAK
     , entityGetQTypeRep
+    , queryGetQTypeRep
     , migrateSchema
     , Entity(..)
     , EntityObj(..)
@@ -91,8 +92,11 @@ insertEntityMapAK x e = return $ ASTInsertEntityMapAK x e
 
 
 entityGetQTypeRep :: forall a b c. Entity a b c -> QTypeRep
-entityGetQTypeRep (Entity _ x) = getQTypeRep (undefined :: c)
-entityGetQTypeRep (EntityMap _ _ x) = getQTypeRep (undefined :: c)
+entityGetQTypeRep (Entity _ _) = getQTypeRep (undefined :: c)
+entityGetQTypeRep (EntityMap _ _ _) = getQTypeRep (undefined :: c)
+
+queryGetQTypeRep :: forall c. (QType c) => Query c -> QTypeRep
+queryGetQTypeRep _ = getQTypeRep (undefined :: c)
 
 entityGetBackendName :: Entity a b c -> Text
 entityGetBackendName (Entity _ (EntityRef x)) = x
@@ -150,6 +154,7 @@ instance (QType k, QType a) => QType (Map k a) where
 instance QType Text where
     toQuery t = ASTTextLit t
     parseQueryRes (QueryRawResSimple (bs:r)) = (TE.decodeUtf8 bs, QueryRawResSimple r)
+    parseQueryRes (QueryRawResSimple rest) = error $ "can't get Text from " ++ show rest
     getQTypeRep _ = QTypeRepText
 
 instance QType () where

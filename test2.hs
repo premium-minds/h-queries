@@ -4,6 +4,7 @@ import HQueries.Queries
 import HQueries.Sqlite
 import HQueries.TH
 import Data.Text (Text)
+import qualified Data.Text as T
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -24,12 +25,12 @@ main = do
     migrateSchema backend [EntityObj sessions]
 
     let dostuff x = do
-        putStrLn $ show $ getBackendCode backend x
+        putStrLn $ T.unpack $ getBackendCode backend x
         res <- hQuery backend x
         putStrLn $ show res
 
     let a = getEntity sessions
     dostuff (return $ toQuery $ Session "1" "2")
-    hQuery backend $ insertEntityMapAK (toQuery $ Session "ola" "ola") sessions
+    dostuff $ insertEntityMapAK (toQuery $ Session "ola" "ola") sessions
     return ()
-    --dostuff a
+    dostuff a

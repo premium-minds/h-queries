@@ -1,49 +1,43 @@
+{-# LANGUAGE OverloadedStrings #-}
 
+import HQueries.Queries
+import HQueries.Sqlite
 
-import Queries
+import qualified Data.Text as T
 
-data Person = Person { firstName :: String
-                        , lastName :: String
-}
+number = Entity WriteAccessFull (EntityRef "inteiro" :: EntityRef Integer)
 
-
-number :: Entity Integer
-number = Entity "inteiro"
-
-numbers :: Entity [Integer]
-numbers = Entity "inteiros"
+numbers = Entity WriteAccessFull (EntityRef "inteiros" :: EntityRef [Integer])
 
 main :: IO ()
 main = do
     backend <- createSqliteBackend "test.db"
+    migrateSchema backend [EntityObj number, EntityObj numbers]
+
+    let dostuff x = do
+        putStrLn $ T.unpack $ getBackendCode backend x
+        res <- hQuery backend x
+        putStrLn $ show res
+  
     let f = \x -> x + toQuery (2 :: Integer)
     
-    let q = f $ toQuery 3
-    putStrLn $ getBackendCode backend q
-    res <- hQuery backend $ q
-    putStrLn $ show res
+    dostuff $ return $ f $ toQuery 3
     
-    let q2 = queryEntity number
-    putStrLn $ getBackendCode backend q2
-    res2 <- hQuery backend $ q2
-    putStrLn $ show res2
+    let q2 = getEntity number
+    dostuff $ q2
 
-    let q3 = f q2
-    putStrLn $ getBackendCode backend q3
-    res3 <- hQuery backend $ q3
-    putStrLn $ show res3
+    dostuff $ f `fmap` q2
 
-    let q4 = queryEntity numbers
-    putStrLn $ getBackendCode backend q4
-    res4 <- hQuery backend $ q4
-    putStrLn $ show res4
+    dostuff $ insertEntity 3 numbers
+    dostuff $ insertEntity 4 numbers
+
+    let q4 = getEntity numbers
+    dostuff q4
     
 
-    let q5 = qmap f q4
-    putStrLn $ getBackendCode backend q5
-    res5 <- hQuery backend $ q5
-    putStrLn $ show res5
-        --putStrLn $ queryToSQL $ dbMap (+ (JustValue 1)) $ queryEntity numeros
+    dostuff $ do
+        v <- q4
+        return $ qmap f v
     --                            [----------------]  [------------------]
     --                     SELECT ( (x) + 1      ) FROM  inteiros
 
