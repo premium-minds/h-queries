@@ -5,20 +5,23 @@ import HQueries.Sqlite
 import HQueries.TH
 import Data.Text (Text)
 
-import HQueries.Internal
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 data Session = Session{user :: Text, secret :: Text} deriving Show
 
-$(deriveQType ''Session)
+newtype SessionId  = SessionId Text deriving Show
 
-sessions :: EntityRW [Session]
-sessions = EntityRW "sessions"
+$(deriveQType ''Session)
+$(deriveQKey ''SessionId)
+
+sessions = EntityMap WriteAccessFull AutoKeysTypeOnly (EntityRef "sessions" :: EntityRef (Map SessionId Session))
 
 
 main :: IO ()
 main = do
     backend <- createSqliteBackend "test.db"
-    migrateSchema backend [Entity sessions]
+    migrateSchema backend [EntityObj sessions]
 
     let dostuff x = do
         putStrLn $ show $ getBackendCode backend x
@@ -27,6 +30,6 @@ main = do
 
     let a = getEntity sessions
     dostuff (return $ toQuery $ Session "1" "2")
-    hQuery backend $ append (toQuery $ Session "ola" "ola") sessions
-
-    dostuff a
+    hQuery backend $ insertEntityMapAK (toQuery $ Session "ola" "ola") sessions
+    return ()
+    --dostuff a

@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, RankNTypes, ScopedTypeVariables #-}
+{-# LANGUAGE GADTs, RankNTypes, ScopedTypeVariables, FlexibleContexts #-}
 
 module HQueries.Internal(
       Query(..)
@@ -14,14 +14,21 @@ module HQueries.Internal(
     , QTypeObj (..)
     , HQIO
     , HQIOState(..)
-    , EntityRW(..)
     , getEntity
-    , append
+    , insertEntity
+    , insertEntityMapAK
     , entityGetQTypeRep
     , migrateSchema
     , Entity(..)
+    , EntityObj(..)
+    , EntityRef(..)
     , entityGetBackendName
-    , entityGetBackendName'
+    , text2key
+    , key2text
+    , QKey
+
+    , WriteAccessFull(..)
+    , AutoKeysTypeOnly(..)
 ) where
 
 import qualified Data.ByteString as BS
@@ -29,6 +36,9 @@ import Data.Text (Text)
 import Control.Monad.State
 import qualified Data.ByteString.Char8 as UTF8
 import qualified Data.Text.Encoding as TE
+
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 data HQIOState = HQIOState
 
@@ -38,55 +48,81 @@ data QTypeRep =   QTypeRepInt
                 | QTypeRepUnit
                 | QTypeRepText
                 | QTypeRepList QTypeRep
+                | QTypeRepMap QTypeRep QTypeRep
                 | QTypeRepProd [QTypeRep] 
+                | QTypeRepNewType QTypeRep
     deriving Show
 
-data Entity = forall a. EntityClass a => Entity a
 
-data EntityRW a = EntityRW Text
+class EntityWriteAccessType a
+class EntityAppendAccess a
+data WriteAccessFull = WriteAccessFull
+instance EntityWriteAccessType WriteAccessFull
+instance EntityAppendAccess WriteAccessFull
 
-class EntityRead a where
-    getEntity :: QType b => a b -> HQIO (Query b)
+class EntityAutoKeysType a
+class EntityAutoKeys a
+data AutoKeysTypeNone = AutoKeysTypeNone
+instance EntityAutoKeysType AutoKeysTypeNone
+data AutoKeysTypeOnly = AutoKeysTypeOnly
+instance EntityAutoKeysType AutoKeysTypeOnly
+instance EntityAutoKeys AutoKeysTypeOnly
+data AutoKeysTypeBoth = AutoKeysTypeBoth
+instance EntityAutoKeysType AutoKeysTypeBoth
+instance EntityAutoKeys AutoKeysTypeBoth
 
-class EntityAppend a where
-    append :: QType b => Query b -> a [b] -> HQIO (Query ())
+data EntityRef a where EntityRef :: QType a => Text -> EntityRef a
 
-class EntityClass a where
-    entityGetQTypeRep' :: a -> QTypeRep
-    entityGetBackendName' :: a -> Text
+data EntityObj where EntityObj :: Entity a b c -> EntityObj
 
-instance EntityRead EntityRW where
-    getEntity e = return $ ASTGetEntity e
+data Entity a b c where
+    Entity :: (QType c, EntityWriteAccessType a) => a -> EntityRef c -> Entity a AutoKeysTypeNone c
+    EntityMap :: (QType (Map x y), EntityWriteAccessType a, EntityAutoKeysType b) => a -> b -> EntityRef (Map x y) -> Entity a b (Map x y)
 
-instance EntityAppend EntityRW where
-    append x e = return $ ASTAppendEntity x e
+getEntity :: QType c => Entity a b c -> HQIO (Query c)
+getEntity e = return $ ASTGetEntity e
 
-instance QType a => EntityClass (EntityRW a) where
-    entityGetQTypeRep' _ = getQTypeRep (undefined :: a) 
-    entityGetBackendName' (EntityRW n) = n
+insertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> HQIO (Query ())
+insertEntity x e = return $ ASTInsertEntity x e
+
+insertEntityMapAK :: (QKey k, QType c, EntityAppendAccess a, EntityAutoKeys b) => Query c -> Entity a b (Map k c) -> HQIO (Query k)
+insertEntityMapAK x e = return $ ASTInsertEntityMapAK x e
 
 
-entityGetQTypeRep (Entity x) = entityGetQTypeRep' x
-entityGetBackendName (Entity x) = entityGetBackendName' x
+
+entityGetQTypeRep :: forall a b c. Entity a b c -> QTypeRep
+entityGetQTypeRep (Entity _ x) = getQTypeRep (undefined :: c)
+entityGetQTypeRep (EntityMap _ _ x) = getQTypeRep (undefined :: c)
+
+entityGetBackendName :: Entity a b c -> Text
+entityGetBackendName (Entity _ (EntityRef x)) = x
+entityGetBackendName (EntityMap _ _ (EntityRef x)) = x
 
 class QType a where
     toQuery :: a -> (Query a)
     parseQueryRes :: QueryRawRes -> (a, QueryRawRes)
     getQTypeRep :: a -> QTypeRep
 
+class QType a => QKey a where
+    key2text :: a -> Text
+    text2key :: Text -> a
+
 data QTypeObj = forall a. (QType a) => QTypeObj a
 
 data Query z where
     ASTUnit :: Query ()
     ASTProdTypeLit :: [QTypeObj] -> Query b
+    ASTNewTypeLit :: Query a -> Query b
     ASTIntLit :: Integer -> Query Integer
     ASTTextLit :: Text -> Query Text
-    ASTListLit :: forall a. QType a => [a] -> Query [a]
+    ASTListLit :: QType a => [a] -> Query [a]
+    ASTMapLit :: (QType k ,QType a) => Map k a -> Query (Map k a)
     ASTQMap :: (Query a -> Query b) -> Query [a] -> Query [b]
     ASTVar :: Query a
     ASTPlusInt :: Query Integer -> Query Integer -> Query Integer
-    ASTGetEntity :: forall a b. (EntityRead a, EntityClass (a b)) => a b -> Query b
-    ASTAppendEntity :: forall a b. (EntityAppend a, EntityClass (a [b])) => Query b -> a [b] -> Query ()
+    ASTGetEntity :: (QType c) => Entity a b c -> Query c
+    ASTInsertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> Query ()
+    ASTInsertEntityMapAK :: (QType c, QKey k, EntityAppendAccess a, EntityAutoKeys b) => Query c -> Entity a b (Map k c) -> Query k
 
 
 data QueryRawRes = QueryRawResSimple [BS.ByteString] deriving Show
@@ -94,7 +130,7 @@ data QueryRawRes = QueryRawResSimple [BS.ByteString] deriving Show
 class QBackend a where
     hQuery :: QType b => a -> HQIO (Query b) -> IO b
     getBackendCode :: QType b => a -> HQIO (Query b) -> Text
-    migrateSchema ::  a -> [Entity] -> IO ()
+    migrateSchema ::  a -> [EntityObj] -> IO ()
 
 instance QType Integer where
     toQuery i = ASTIntLit i
@@ -105,6 +141,11 @@ instance QType a => QType [a] where
     toQuery l = ASTListLit l 
     parseQueryRes qr = (collectListRes parseQueryRes qr, QueryRawResSimple [])
     getQTypeRep _ = QTypeRepList (getQTypeRep (undefined :: a))
+
+instance (QType k, QType a) => QType (Map k a) where
+    toQuery l = ASTMapLit l 
+    --parseQueryRes qr = (collectListRes parseQueryRes qr, QueryRawResSimple [])
+    getQTypeRep _ = QTypeRepMap (getQTypeRep (undefined :: k)) (getQTypeRep (undefined :: a))
 
 instance QType Text where
     toQuery t = ASTTextLit t

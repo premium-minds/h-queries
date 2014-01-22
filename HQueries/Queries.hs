@@ -1,22 +1,29 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses, ScopedTypeVariables #-}
 
 module HQueries.Queries (
-     Query
-    ,toQuery
-    ,hQuery
-    ,getBackendCode
-    ,qmap
-    ,EntityRW(..)
-    ,getEntity
-    ,append
-    ,migrateSchema
-    ,Entity(..)
+      Query
+    , toQuery
+    , hQuery
+    , getBackendCode
+    , qmap
+    , getEntity
+    , insertEntity
+    , insertEntityMapAK
+    , migrateSchema
+    , Entity(..)
+    , EntityObj(..)
+    , EntityRef(..)
+    , deriveQType
+
+    , WriteAccessFull(..)
+    , AutoKeysTypeOnly(..)
 ) where 
 
 import Data.List
 import Data.Text (Text)
 
 import HQueries.Internal
+import HQueries.TH
 
 
 instance Num (Query Integer) where

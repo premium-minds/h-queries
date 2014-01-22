@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 module HQueries.TH(
-    deriveQType
+     deriveQType
+    ,deriveQKey
 ) where
 
 import Language.Haskell.TH
@@ -60,34 +61,58 @@ con2clause_getQTypeRep c =
 applyArgs :: ExpQ -> [ExpQ] -> ExpQ
 applyArgs f args = foldr (\a l -> appE l a) f args
 
+deriveQKey :: Name -> DecsQ
+deriveQKey tyName = do
+    let txtName = ''Text
+    (TyConI (NewtypeD [] _ [] (NormalC consName [(NotStrict, (ConT txtName))]) [])) <- reify tyName
+    x <- newName "x"
+    iDec <- instanceD (return [])
+        (appT (conT ''QKey) (conT tyName))
+        [
+            funD 'key2text [
+                clause [conP consName [varP x]] (normalB $ varE x) []
+            ],
+            funD 'text2key [
+                clause [varP x] (normalB $ appE (conE consName) (varE x)) []
+            ]
+        ]
+    qtDec <- deriveQType tyName
+    return $ qtDec ++ [iDec]
+    
 
 deriveQType :: Name -> DecsQ
 deriveQType tyName = do
-    (TyConI (DataD _ _ [] [con] _)) <- reify tyName
-    iDec <- instanceD (return [])
-                (appT (conT ''QType) (conT tyName) )
-                [
-                    funD 'toQuery [
-                        con2clause_toQuery con
-                    ],
-                    funD 'parseQueryRes [
-                        con2clause_parseQueryRes con
-                    ],
-                    funD 'getQTypeRep [
-                        con2clause_getQTypeRep con
+    (TyConI tpDec) <- reify tyName
+    x <- newName "x"
+    iDec <- case tpDec of
+            (DataD _ _ [] [con] _) ->
+                instanceD (return [])
+                    (appT (conT ''QType) (conT tyName) )
+                    [
+                        funD 'toQuery [
+                            con2clause_toQuery con
+                        ],
+                        funD 'parseQueryRes [
+                            con2clause_parseQueryRes con
+                        ],
+                        funD 'getQTypeRep [
+                            con2clause_getQTypeRep con
+                        ]
                     ]
-                ]
+            (NewtypeD [] _ [] (NormalC conName [(NotStrict, (ConT conType))]) []) ->
+                instanceD (return [])
+                    (appT (conT ''QType) (conT tyName) )
+                    [
+                        funD 'toQuery [
+                            clause [conP conName [varP x]] (normalB $ [|ASTNewTypeLit $ toQuery $(varE x)|]) []
+                        ],
+                        funD 'parseQueryRes [
+                            clause [varP x] (normalB [|let (a,b) = parseQueryRes $(varE x) in ( $(conE conName) a, b)|]) []
+                        ],
+                        funD 'getQTypeRep [
+                            clause [wildP] (normalB $ appE (conE 'QTypeRepNewType) (type2QTypeRep $ ConT conType) ) []
+                        ]
+                    ]
     return [iDec]
 
 
-
-{-
-instance QType Session where
-    toQuery Session{..} = ASTProdTypeLit [QTypeObj user, QTypeObj secret]
-    parseQueryRes bs = 
-        let
-            (user, r1) = parseQueryRes bs
-            (secret, r) = parseQueryRes r1
-        in
-            (Session user secret, r)
--}

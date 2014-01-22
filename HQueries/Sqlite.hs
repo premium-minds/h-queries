@@ -28,7 +28,7 @@ instance QBackend SqliteBackend where
         return $ fst $ parseQueryRes $ sqlValue2QueryRawRes res
 
     migrateSchema b@(SqliteBackend conn) l = do
-        forM_ l $ \x -> do
+        forM_ l $ \(EntityObj x) -> do
             let sql = entity2migration x
             tInfo <- quickQuery' conn "SELECT sql FROM sqlite_master WHERE type='table' and name = ?" [SqlString $ T.unpack $ entityGetBackendName x]
             case tInfo of
