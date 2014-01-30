@@ -28,5 +28,8 @@ library
                      , HDBC-sqlite3 >=2.3
                      , HDBC >=2.3
                      , containers
+                     , lens
+                     , MissingH
+                     , syb
   
   default-language:    Haskell2010
