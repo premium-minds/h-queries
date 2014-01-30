@@ -27,5 +27,6 @@ library
                      , mtl >=2.1
                      , HDBC-sqlite3 >=2.3
                      , HDBC >=2.3
+                     , containers
   
   default-language:    Haskell2010

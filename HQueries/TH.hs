@@ -1,16 +1,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 module HQueries.TH(
-     deriveQType
-    ,deriveQKey
+      deriveQType
+    , deriveQKey
+    , makeQLenses
 ) where
 
 import Language.Haskell.TH
 import HQueries.Internal
 import Data.Text (Text)
+import qualified Data.String.Utils as SU
+
+import Control.Lens
 
 con2ArgTypes :: Con -> [Type] 
 con2ArgTypes (NormalC _ subs) = map (\(_,x) -> x) subs 
 con2ArgTypes (RecC _ subs) = map (\(_,_,x) -> x) subs 
+
+con2ArgNames :: Con -> [Name]
+con2ArgNames (RecC _ subs) = map (\(x,_,_) -> x) subs 
 
 con2Vars :: String -> Con -> Q [Name]
 con2Vars z c = mapM (\_ -> newName z) (con2ArgTypes c) 
@@ -60,6 +67,30 @@ con2clause_getQTypeRep c =
 
 applyArgs :: ExpQ -> [ExpQ] -> ExpQ
 applyArgs f args = foldr (\a l -> appE l a) f args
+
+
+makeQLensesAux :: Name -> [(Name, Type, Int)] -> DecsQ
+makeQLensesAux n l = concat `fmap` mapM (makeQLens n) l
+
+makeLensQName :: Name -> Name
+makeLensQName n = mkName $ (tail $ showName n) ++ "Q"
+
+
+makeQLens :: Name -> (Name, Type, Int) -> DecsQ
+makeQLens n (cn, ctp, pos) = do
+    let ln = makeLensQName cn
+    body <- [|lens (ASTProjection pos) undefined|]
+    return $ [ SigD ln (AppT (AppT (ConT ''Lens') (AppT (ConT ''Query) $ ConT n)) (AppT (ConT ''Query) ctp))
+             , ValD (VarP ln) (NormalB (body)) []]
+    
+
+
+makeQLenses :: Name -> DecsQ
+makeQLenses tyName = do
+    (TyConI tpDec) <- reify tyName
+    case tpDec of    
+        (DataD _ _ [] [con] _) ->
+            makeQLensesAux (tyName) $ zip3 (con2ArgNames con) (con2ArgTypes con) [1..]
 
 deriveQKey :: Name -> DecsQ
 deriveQKey tyName = do
@@ -116,3 +147,5 @@ deriveQType tyName = do
     return [iDec]
 
 
+showName :: Name -> String
+showName n = last $ SU.split "." $ show n

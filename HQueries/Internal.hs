@@ -12,7 +12,7 @@ module HQueries.Internal(
     , getQTypeRep
     , QTypeRep(..)
     , QTypeObj (..)
-    , HQIO
+    , HQIO(..)
     , HQIOState(..)
     , getEntity
     , insertEntity
@@ -39,11 +39,20 @@ import qualified Data.ByteString.Char8 as UTF8
 import qualified Data.Text.Encoding as TE
 
 import Data.Map (Map)
-import qualified Data.Map as Map
+import qualified Data.Map as M
+
 
 data HQIOState = HQIOState
 
-type HQIO = State HQIOState
+newtype HQIO a = HQIO (State HQIOState a)
+
+
+instance Monad HQIO where
+    return x = HQIO $ return x
+    (HQIO x) >>= f = HQIO $ x >>= (\x -> let HQIO y = f x in y)
+
+instance Functor HQIO where
+    fmap f (HQIO x) = HQIO $ fmap f x 
 
 data QTypeRep =   QTypeRepInt
                 | QTypeRepUnit
@@ -107,7 +116,7 @@ class QType a where
     parseQueryRes :: QueryRawRes -> (a, QueryRawRes)
     getQTypeRep :: a -> QTypeRep
 
-class QType a => QKey a where
+class (QType a, Ord a) => QKey a where
     key2text :: a -> Text
     text2key :: Text -> a
 
@@ -121,12 +130,14 @@ data Query z where
     ASTTextLit :: Text -> Query Text
     ASTListLit :: QType a => [a] -> Query [a]
     ASTMapLit :: (QType k ,QType a) => Map k a -> Query (Map k a)
-    ASTQMap :: (Query a -> Query b) -> Query [a] -> Query [b]
+    ASTQMap :: (QType a, QType b) => (Query a -> Query b) -> Query [a] -> Query [b]
     ASTVar :: Query a
     ASTPlusInt :: Query Integer -> Query Integer -> Query Integer
     ASTGetEntity :: (QType c) => Entity a b c -> Query c
     ASTInsertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> Query ()
     ASTInsertEntityMapAK :: (QType c, QKey k, EntityAppendAccess a, EntityAutoKeys b) => Query c -> Entity a b (Map k c) -> Query k
+    ASTQValues :: (QKey k, QType c) => Query (Map k c) -> Query [c]
+    ASTProjection :: Int -> Query a -> Query b
 
 
 data QueryRawRes = QueryRawResSimple [BS.ByteString] deriving Show
@@ -141,15 +152,6 @@ instance QType Integer where
     parseQueryRes (QueryRawResSimple (bs:r)) = (read $ UTF8.unpack bs, QueryRawResSimple r)
     getQTypeRep _ = QTypeRepInt
 
-instance QType a => QType [a] where
-    toQuery l = ASTListLit l 
-    parseQueryRes qr = (collectListRes parseQueryRes qr, QueryRawResSimple [])
-    getQTypeRep _ = QTypeRepList (getQTypeRep (undefined :: a))
-
-instance (QType k, QType a) => QType (Map k a) where
-    toQuery l = ASTMapLit l 
-    --parseQueryRes qr = (collectListRes parseQueryRes qr, QueryRawResSimple [])
-    getQTypeRep _ = QTypeRepMap (getQTypeRep (undefined :: k)) (getQTypeRep (undefined :: a))
 
 instance QType Text where
     toQuery t = ASTTextLit t
@@ -162,8 +164,6 @@ instance QType () where
     parseQueryRes qr = ((), qr)
     getQTypeRep _ = QTypeRepUnit
 
-collectListRes :: (QueryRawRes -> (a, QueryRawRes)) -> QueryRawRes -> [a]
-collectListRes f (QueryRawResSimple []) = []
-collectListRes f l = let (t, r) = f l in [t] ++ collectListRes f r
+
 
 

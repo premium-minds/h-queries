@@ -38,7 +38,5 @@ main = do
     dostuff $ do
         v <- q4
         return $ qmap f v
-    --                            [----------------]  [------------------]
-    --                     SELECT ( (x) + 1      ) FROM  inteiros
 
 
