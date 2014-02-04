@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs, RankNTypes, ScopedTypeVariables, FlexibleContexts #-}
+{-# LANGUAGE GADTs, RankNTypes, ScopedTypeVariables, FlexibleContexts, GeneralizedNewtypeDeriving, StandaloneDeriving, FlexibleInstances #-}
 
 module HQueries.Internal(
       Query(..)
@@ -11,9 +11,9 @@ module HQueries.Internal(
     , toQuery
     , getQTypeRep
     , QTypeRep(..)
-    , QTypeObj (..)
     , HQIO(..)
     , HQIOState(..)
+    , QueryObj(..)
     , getEntity
     , insertEntity
     , insertEntityMapAK
@@ -27,6 +27,7 @@ module HQueries.Internal(
     , text2key
     , key2text
     , QKey
+    , runHQIO
 
     , WriteAccessFull(..)
     , AutoKeysTypeOnly(..)
@@ -42,52 +43,79 @@ import Data.Map (Map)
 import qualified Data.Map as M
 
 
-data HQIOState = HQIOState
+data HQIOState = HQIOState{statements :: [QueryObj], varIdx :: Int}
 
-newtype HQIO a = HQIO (State HQIOState a)
+newtype HQIO a = HQIO (State HQIOState a) deriving (Monad, Functor)
 
+newIdxST :: HQIO Int--State HQIOState Int
+newIdxST = HQIO $ do
+    st <- get
+    let i = varIdx st + 1
+    put $ st{varIdx = 1}
+    return i
 
-instance Monad HQIO where
-    return x = HQIO $ return x
-    (HQIO x) >>= f = HQIO $ x >>= (\x -> let HQIO y = f x in y)
+storeStmST :: Query a -> HQIO () -- State HQIOState ()
+storeStmST x = HQIO $ do
+    st <- get
+    put $ st{statements =  (QueryObj x):(statements st)}
 
-instance Functor HQIO where
-    fmap f (HQIO x) = HQIO $ fmap f x 
+evalQueryWithSideEffects :: QType c => Query c -> HQIO (Query c)
+evalQueryWithSideEffects q = do
+    i <- newIdxST
+    storeStmST $ ASTDef i q
+    return $ ASTVar i
+
+runHQIO :: HQIO (Query a) -> (Query a, [QueryObj])
+runHQIO (HQIO x) =
+    let
+        (res, state) = runState x HQIOState{statements = [], varIdx = 0}
+    in
+        (res, reverse (statements state))
 
 data QTypeRep =   QTypeRepInt
                 | QTypeRepUnit
                 | QTypeRepText
                 | QTypeRepList QTypeRep
+                | QTypeRepMaybe QTypeRep
                 | QTypeRepMap QTypeRep QTypeRep
-                | QTypeRepProd [QTypeRep] 
+                | QTypeRepProd (Maybe [Text]) [QTypeRep] 
                 | QTypeRepNewType QTypeRep
     deriving Show
 
 
-class EntityWriteAccessType a
-class EntityAppendAccess a
-data WriteAccessFull = WriteAccessFull
+class Show a => EntityWriteAccessType a
+class Show a => EntityAppendAccess a
+data WriteAccessFull = WriteAccessFull deriving Show
 instance EntityWriteAccessType WriteAccessFull
 instance EntityAppendAccess WriteAccessFull
 
-class EntityAutoKeysType a
-class EntityAutoKeys a
-data AutoKeysTypeNone = AutoKeysTypeNone
+class Show a => EntityAutoKeysType a
+class Show a => EntityAutoKeys a
+data AutoKeysTypeNone = AutoKeysTypeNone deriving Show
 instance EntityAutoKeysType AutoKeysTypeNone
-data AutoKeysTypeOnly = AutoKeysTypeOnly
+data AutoKeysTypeOnly = AutoKeysTypeOnly deriving Show
 instance EntityAutoKeysType AutoKeysTypeOnly
 instance EntityAutoKeys AutoKeysTypeOnly
-data AutoKeysTypeBoth = AutoKeysTypeBoth
+data AutoKeysTypeBoth = AutoKeysTypeBoth deriving Show
 instance EntityAutoKeysType AutoKeysTypeBoth
 instance EntityAutoKeys AutoKeysTypeBoth
 
 data EntityRef a where EntityRef :: QType a => Text -> EntityRef a
 
+deriving instance Show (EntityRef a)
+
+data QueryObj where QueryObj :: Query a -> QueryObj
+
+deriving instance Show QueryObj
+
 data EntityObj where EntityObj :: Entity a b c -> EntityObj
 
 data Entity a b c where
     Entity :: (QType c, EntityWriteAccessType a) => a -> EntityRef c -> Entity a AutoKeysTypeNone c
-    EntityMap :: (QType (Map x y), EntityWriteAccessType a, EntityAutoKeysType b) => a -> b -> EntityRef (Map x y) -> Entity a b (Map x y)
+    EntityMap :: (QType (Map x y), EntityWriteAccessType a, EntityAutoKeysType b) =>
+                            a -> b -> EntityRef (Map x y) -> Entity a b (Map x y)
+
+deriving instance Show (Entity a b c)
 
 getEntity :: QType c => Entity a b c -> HQIO (Query c)
 getEntity e = return $ ASTGetEntity e
@@ -95,9 +123,9 @@ getEntity e = return $ ASTGetEntity e
 insertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> HQIO (Query ())
 insertEntity x e = return $ ASTInsertEntity x e
 
-insertEntityMapAK :: (QKey k, QType c, EntityAppendAccess a, EntityAutoKeys b) => Query c -> Entity a b (Map k c) -> HQIO (Query k)
-insertEntityMapAK x e = return $ ASTInsertEntityMapAK x e
-
+insertEntityMapAK :: (QKey k, QType c, EntityAppendAccess a, EntityAutoKeys b) =>
+                                Query c -> Entity a b (Map k c) -> HQIO (Query k)
+insertEntityMapAK x e = evalQueryWithSideEffects $ ASTInsertEntityMapAK x e
 
 
 entityGetQTypeRep :: forall a b c. Entity a b c -> QTypeRep
@@ -120,18 +148,24 @@ class (QType a, Ord a) => QKey a where
     key2text :: a -> Text
     text2key :: Text -> a
 
-data QTypeObj = forall a. (QType a) => QTypeObj a
+-- data QTypeObj = forall a. (QType a) => QTypeObj a
+
+instance (Show (Query b)) => Show (Query a -> Query b) where
+    show f = show (f $ ASTVar (-1))
 
 data Query z where
     ASTUnit :: Query ()
-    ASTProdTypeLit :: [QTypeObj] -> Query b
+    ASTNothing :: Query (Maybe a)
+    ASTJust :: Query a -> Query (Maybe a)
+    ASTProdTypeLit :: [QueryObj] -> Query b
     ASTNewTypeLit :: Query a -> Query b
     ASTIntLit :: Integer -> Query Integer
     ASTTextLit :: Text -> Query Text
-    ASTListLit :: QType a => [a] -> Query [a]
-    ASTMapLit :: (QType k ,QType a) => Map k a -> Query (Map k a)
+    ASTListLit :: [Query a] -> Query [a]
+    ASTMapLit :: [(Query k, Query a)] -> Query (Map k a)
     ASTQMap :: (QType a, QType b) => (Query a -> Query b) -> Query [a] -> Query [b]
-    ASTVar :: Query a
+    ASTVar :: Int -> Query a
+    ASTDef :: Int -> Query a -> Query ()
     ASTPlusInt :: Query Integer -> Query Integer -> Query Integer
     ASTGetEntity :: (QType c) => Entity a b c -> Query c
     ASTInsertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> Query ()
@@ -139,6 +173,7 @@ data Query z where
     ASTQValues :: (QKey k, QType c) => Query (Map k c) -> Query [c]
     ASTProjection :: Int -> Query a -> Query b
 
+deriving instance Show (Query a) 
 
 data QueryRawRes = QueryRawResSimple [BS.ByteString] deriving Show
 

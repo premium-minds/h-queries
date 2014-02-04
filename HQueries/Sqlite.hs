@@ -11,6 +11,7 @@ import Database.HDBC
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as UTF8
 import Control.Monad
 
 import qualified Data.Text.Encoding as TE
@@ -18,17 +19,34 @@ import qualified Data.Text.Encoding as TE
 data SqliteBackend = SqliteBackend Sqlite.Connection
 
 createSqliteBackend :: FilePath -> IO SqliteBackend
-createSqliteBackend s = SqliteBackend `fmap` Sqlite.connectSqlite3 s
+createSqliteBackend s = do
+    conn <- Sqlite.connectSqlite3 s
+    executeListRaw conn initSqlVarsTable
+    return $ SqliteBackend conn
+
+executeListRaw :: IConnection c => c -> [Text] -> IO ()
+executeListRaw conn l = do
+    let stms = map T.unpack l
+    forM_ stms $ \x -> do
+        st <- prepare conn x
+        executeRaw st
 
 instance QBackend SqliteBackend where
-    getBackendCode _ q = T.intercalate ";\n" $ reverse $ hqio2Sql q
+    getBackendCode _ q =
+        let 
+            (res, steps) = hqio2Sql 0 q
+        in
+            T.intercalate ";\n" (steps ++ [res])
     
     hQuery b@(SqliteBackend conn) q = do
-        let stms = map T.unpack $ hqio2Sql q
-        forM_ (reverse $ tail stms) $ \x -> do
-            st <- prepare conn x
-            executeRaw st
-        res <-  quickQuery' conn (head stms) []
+        let (sSql0, sSqlRes) = getSessionSql
+        executeListRaw conn [sSql0]
+        [[SqlByteString sRaw]] <- quickQuery' conn (T.unpack sSqlRes) []
+        let s = read $ UTF8.unpack sRaw
+        let (res, steps) = hqio2Sql s q
+        executeListRaw conn steps
+        res <-  quickQuery' conn (T.unpack res) []
+        executeListRaw conn $ freeSession s
         commit conn
         return $ fst $ parseQueryRes $ sqlValue2QueryRawRes res
 
@@ -36,7 +54,10 @@ instance QBackend SqliteBackend where
         forM_ l $ \(EntityObj x) -> do
             let (create, init) = entity2migration x
             let sql = create `T.append` init
-            tInfo <- quickQuery' conn "SELECT sql FROM sqlite_master WHERE type='table' and name = ?" [SqlString $ T.unpack $ entityGetBackendName x]
+            tInfo <- quickQuery' 
+                        conn 
+                        "SELECT sql FROM sqlite_master WHERE type='table' and name = ?" 
+                        [SqlString $ T.unpack $ entityGetBackendName x]
             case tInfo of
                 [] -> do
                     putStrLn $ show $ sql

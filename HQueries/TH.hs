@@ -8,7 +8,9 @@ module HQueries.TH(
 import Language.Haskell.TH
 import HQueries.Internal
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.String.Utils as SU
+import Data.Maybe
 
 import Control.Lens
 
@@ -16,8 +18,9 @@ con2ArgTypes :: Con -> [Type]
 con2ArgTypes (NormalC _ subs) = map (\(_,x) -> x) subs 
 con2ArgTypes (RecC _ subs) = map (\(_,_,x) -> x) subs 
 
-con2ArgNames :: Con -> [Name]
-con2ArgNames (RecC _ subs) = map (\(x,_,_) -> x) subs 
+con2ArgNames :: Con -> Maybe [Name]
+con2ArgNames (RecC _ subs) = Just $ map (\(x,_,_) -> x) subs 
+con2ArgNames _ = Nothing
 
 con2Vars :: String -> Con -> Q [Name]
 con2Vars z c = mapM (\_ -> newName z) (con2ArgTypes c) 
@@ -35,7 +38,7 @@ con2clause_toQuery c = do
         [conP n (map varP vars)] 
         (normalB $ appE 
             (conE 'ASTProdTypeLit) 
-            (listE $ map (\x -> [|QTypeObj $(varE x)|]) vars)
+            (listE $ map (\x -> [|QueryObj (toQuery $(varE x))|]) vars)
         )
         []
     
@@ -60,10 +63,16 @@ type2QTypeRep (ConT x) | x == ''Text = [|QTypeRepText|]
 
 con2clause_getQTypeRep :: Con -> ClauseQ
 con2clause_getQTypeRep c =
-    clause
-        [wildP]
-        (normalB $ appE (conE 'QTypeRepProd) (listE $ map type2QTypeRep $ con2ArgTypes c ) )
-        []
+    let
+        names = 
+            case con2ArgNames c of
+                Nothing -> [|Nothing|]
+                Just names -> [|Just $ map T.pack $(return $ ListE $ (map (LitE . StringL . showName) names))|]
+    in
+        clause
+            [wildP]
+            (normalB $ [|QTypeRepProd $names $(listE $ map type2QTypeRep $ con2ArgTypes c )|])
+            []
 
 applyArgs :: ExpQ -> [ExpQ] -> ExpQ
 applyArgs f args = foldr (\a l -> appE l a) f args
@@ -90,7 +99,7 @@ makeQLenses tyName = do
     (TyConI tpDec) <- reify tyName
     case tpDec of    
         (DataD _ _ [] [con] _) ->
-            makeQLensesAux (tyName) $ zip3 (con2ArgNames con) (con2ArgTypes con) [1..]
+            makeQLensesAux (tyName) $ zip3 (fromJust $ con2ArgNames con) (con2ArgTypes con) [1..]
 
 deriveQKey :: Name -> DecsQ
 deriveQKey tyName = do
