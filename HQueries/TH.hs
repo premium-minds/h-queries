@@ -61,9 +61,14 @@ type2QTypeRep :: Type -> ExpQ -- QTypeRep
 type2QTypeRep (ConT x) | x == ''Integer = [|QTypeRepInt|]
 type2QTypeRep (ConT x) | x == ''Text = [|QTypeRepText|]
 
-con2clause_getQTypeRep :: Con -> ClauseQ
-con2clause_getQTypeRep c =
+nameExp :: Name -> ExpQ
+nameExp n = [| T.pack $(return $ LitE $ StringL $ showName n)|]
+
+con2clause_getQTypeRep :: Name -> Con -> ClauseQ
+con2clause_getQTypeRep tyName c =
     let
+        tname = nameExp tyName
+        cname = nameExp $ con2Name c
         names = 
             case con2ArgNames c of
                 Nothing -> [|Nothing|]
@@ -71,7 +76,7 @@ con2clause_getQTypeRep c =
     in
         clause
             [wildP]
-            (normalB $ [|QTypeRepProd $names $(listE $ map type2QTypeRep $ con2ArgTypes c )|])
+            (normalB $ [|QTypeRepProd (QTypeRepProdHead $tname $cname) $names $(listE $ map type2QTypeRep $ con2ArgTypes c )|])
             []
 
 applyArgs :: ExpQ -> [ExpQ] -> ExpQ
@@ -123,6 +128,7 @@ deriveQKey tyName = do
 deriveQType :: Name -> DecsQ
 deriveQType tyName = do
     (TyConI tpDec) <- reify tyName
+    let tname = nameExp tyName
     x <- newName "x"
     iDec <- case tpDec of
             (DataD _ _ [] [con] _) ->
@@ -136,7 +142,7 @@ deriveQType tyName = do
                             con2clause_parseQueryRes con
                         ],
                         funD 'getQTypeRep [
-                            con2clause_getQTypeRep con
+                            con2clause_getQTypeRep tyName con
                         ]
                     ]
             (NewtypeD [] _ [] (NormalC conName [(NotStrict, (ConT conType))]) []) ->
@@ -150,7 +156,7 @@ deriveQType tyName = do
                             clause [varP x] (normalB [|let (a,b) = parseQueryRes $(varE x) in ( $(conE conName) a, b)|]) []
                         ],
                         funD 'getQTypeRep [
-                            clause [wildP] (normalB $ appE (conE 'QTypeRepNewType) (type2QTypeRep $ ConT conType) ) []
+                            clause [wildP] (normalB $ [|QTypeRepNewType $tname $(type2QTypeRep $ ConT conType)|]) []
                         ]
                     ]
     return [iDec]

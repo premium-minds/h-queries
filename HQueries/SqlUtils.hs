@@ -1,6 +1,7 @@
-{-# LANGUAGE GADTs, RankNTypes #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DeriveDataTypeable#-}
+{-# LANGUAGE GADTs, RankNTypes   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE DeriveDataTypeable  #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module HQueries.SqlUtils(
       hqio2Sql
@@ -144,15 +145,17 @@ queryToSQL (ASTDef i (ASTInsertEntityMapAK x ref)) = do
     addSqlStatement $ SqlInsertPartial n [2..nrCols] vx
     addSqlStatement $ SqlStmCreateVar i (SelectS [SqlLastInsertedId])
     queryToSQL $ ASTVar i
-queryToSQL (ASTQValues m) = do
-    let (QTypeRepMap keyRep valRep) = queryGetQTypeRep m
-    let size = mkListColumnsCount valRep
-    let start = mkListColumnsCount keyRep
-    vm <- queryToSQL m
-    return $ SelectCols [(start+1)..(start + size)] vm
+--queryToSQL (ASTQValues m) = do
+--    let (QTypeRepMap keyRep valRep) = queryGetQTypeRep m
+--    let size = mkListColumnsCount valRep
+--    let start = mkListColumnsCount keyRep
+--    vm <- queryToSQL m
+--    return $ SelectCols [(start+1)..(start + size)] vm
 queryToSQL (ASTProjection i s) = do
     vs <- queryToSQL s
     return $ SelectCols [i] vs
+queryToSQL (ASTQMapToList m) = queryToSQL m
+queryToSQL (ASTQListToMap l) = queryToSQL l
 
 queryToSQL o = error $ "no clause for " ++ show o ++ " in SqlUtils\n"
 
@@ -180,14 +183,14 @@ hqio2Sql s x =
 
 
 mkListColumns :: QTypeRep -> [Text]
-mkListColumns (QTypeRepProd _ l) = concatMap mkListColumns l
-mkListColumns (QTypeRepNewType x) = mkListColumns x
+mkListColumns (QTypeRepProd _ _ l) = concatMap mkListColumns l
+mkListColumns (QTypeRepNewType _ x) = mkListColumns x
 mkListColumns QTypeRepInt = ["INT"]
 mkListColumns QTypeRepText = ["TEXT"]
 
 mkListColumnsCount :: QTypeRep -> Int
-mkListColumnsCount (QTypeRepProd _ l) = sum $ map mkListColumnsCount l
-mkListColumnsCount (QTypeRepNewType x) = mkListColumnsCount x
+mkListColumnsCount (QTypeRepProd _ _ l) = sum $ map mkListColumnsCount l
+mkListColumnsCount (QTypeRepNewType _ x) = mkListColumnsCount x
 mkListColumnsCount QTypeRepInt = 1
 mkListColumnsCount QTypeRepText = 1
 mkListColumnsCount o = error $ "can't make column list for " ++ show o

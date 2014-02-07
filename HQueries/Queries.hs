@@ -7,6 +7,8 @@ module HQueries.Queries (
     , getBackendCode
     , qmap
     , qvalues
+    , qmapValues
+    , qMapToList
     , getEntity
     , insertEntity
     , insertEntityMapAK
@@ -32,6 +34,13 @@ import Data.Text (Text)
 
 import HQueries.Internal
 import HQueries.TH
+
+import Control.Lens
+import Control.Lens.Tuple
+import Control.Applicative
+import Control.Lens.Combinators
+import Control.Lens.Indexed
+import Control.Lens.Type
 
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -63,6 +72,16 @@ instance (QType a, QType b) => QType (a,b) where
             (y, r) = parseQueryRes r0
         in
             ((x,y),r)
+    getQTypeRep _ = QTypeRepProd QTypeRepProdHeadTuple Nothing [getQTypeRep (undefined :: a), getQTypeRep (undefined :: b)]
+
+qTuple2 :: Query a -> Query b -> Query (a, b)
+qTuple2 q1 q2 = ASTProdTypeLit [QueryObj q1, QueryObj q2]
+
+instance (QType a, QType b, QType a') => Field1 (Query (a, b)) (Query (a', b)) (Query a) (Query a') where
+    _1 k q = indexed k (0 :: Int) (ASTProjection 0 q) <&> \x' -> qTuple2 x' (ASTProjection 1 q) -- \a' -> (a',b)
+
+instance (QType a, QType b, QType b') => Field2 (Query (a, b)) (Query (a, b')) (Query b) (Query b') where
+    _2 k q = indexed k (1 :: Int) (ASTProjection 1 q) <&> \y' -> qTuple2 (ASTProjection 0 q) y' -- \b' -> (a,b')
 
 instance QType a => QType (Maybe a) where
     toQuery Nothing = ASTNothing
@@ -73,5 +92,14 @@ qmap ::(QType a, QType b) => (Query a -> Query b) -> Query [a] -> Query [b]
 qmap f lx = ASTQMap f lx
 
 qvalues ::(QKey a, QType b) => Query (Map a b) -> Query [b]
-qvalues m = ASTQValues m
+qvalues m = qmap (view _2) (qMapToList m)
+
+qMapToList :: (QKey k, QType a) => Query (Map k a) -> Query [(k, a)]
+qMapToList m = ASTQMapToList m
+
+qListToMap :: (QKey k, QType a) => Query [(k, a)] -> Query (Map k a)
+qListToMap l = ASTQListToMap l
+
+qmapValues :: (QKey k, QType a, QType b) => (Query a -> Query b) -> Query (Map k a) -> Query (Map k b)
+qmapValues f m = qListToMap $ qmap (\x -> over _2 f x) $ qMapToList m
 

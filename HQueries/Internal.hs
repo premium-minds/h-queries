@@ -10,6 +10,7 @@ module HQueries.Internal(
     , QType
     , toQuery
     , getQTypeRep
+    , QTypeRepProdHead(..)
     , QTypeRep(..)
     , HQIO(..)
     , HQIOState(..)
@@ -72,14 +73,18 @@ runHQIO (HQIO x) =
     in
         (res, reverse (statements state))
 
+data QTypeRepProdHead = QTypeRepProdHeadTuple
+                      | QTypeRepProdHead Text Text
+    deriving Show
+
 data QTypeRep =   QTypeRepInt
                 | QTypeRepUnit
                 | QTypeRepText
                 | QTypeRepList QTypeRep
                 | QTypeRepMaybe QTypeRep
                 | QTypeRepMap QTypeRep QTypeRep
-                | QTypeRepProd (Maybe [Text]) [QTypeRep] 
-                | QTypeRepNewType QTypeRep
+                | QTypeRepProd QTypeRepProdHead (Maybe [Text]) [QTypeRep] 
+                | QTypeRepNewType Text QTypeRep
     deriving Show
 
 
@@ -148,8 +153,6 @@ class (QType a, Ord a) => QKey a where
     key2text :: a -> Text
     text2key :: Text -> a
 
--- data QTypeObj = forall a. (QType a) => QTypeObj a
-
 instance (Show (Query b)) => Show (Query a -> Query b) where
     show f = show (f $ ASTVar (-1))
 
@@ -170,8 +173,9 @@ data Query z where
     ASTGetEntity :: (QType c) => Entity a b c -> Query c
     ASTInsertEntity :: (QType c, EntityAppendAccess a) => Query c -> Entity a b [c] -> Query ()
     ASTInsertEntityMapAK :: (QType c, QKey k, EntityAppendAccess a, EntityAutoKeys b) => Query c -> Entity a b (Map k c) -> Query k
-    ASTQValues :: (QKey k, QType c) => Query (Map k c) -> Query [c]
     ASTProjection :: Int -> Query a -> Query b
+    ASTQMapToList :: (QKey k, QType c) => Query (Map k c) -> Query [(k, c)]
+    ASTQListToMap :: (QKey k, QType c) => Query [(k, c)] -> Query (Map k c)
 
 deriving instance Show (Query a) 
 
