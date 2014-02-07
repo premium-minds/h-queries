@@ -23,6 +23,7 @@ module HQueries.Queries (
     , QBackend
     , QType
     , QTypeRep(..)
+    , QTypeRepProdHead(..)
     , getQTypeRep
 
     , WriteAccessFull(..)
@@ -78,10 +79,10 @@ qTuple2 :: Query a -> Query b -> Query (a, b)
 qTuple2 q1 q2 = ASTProdTypeLit [QueryObj q1, QueryObj q2]
 
 instance (QType a, QType b, QType a') => Field1 (Query (a, b)) (Query (a', b)) (Query a) (Query a') where
-    _1 k q = indexed k (0 :: Int) (ASTProjection 0 q) <&> \x' -> qTuple2 x' (ASTProjection 1 q) -- \a' -> (a',b)
+    _1 k q = indexed k (0 :: Int) (ASTProjection 1 q) <&> \x' -> qTuple2 x' (ASTProjection 2 q) -- \a' -> (a',b)
 
 instance (QType a, QType b, QType b') => Field2 (Query (a, b)) (Query (a, b')) (Query b) (Query b') where
-    _2 k q = indexed k (1 :: Int) (ASTProjection 1 q) <&> \y' -> qTuple2 (ASTProjection 0 q) y' -- \b' -> (a,b')
+    _2 k q = indexed k (1 :: Int) (ASTProjection 2 q) <&> \y' -> qTuple2 (ASTProjection 1 q) y' -- \b' -> (a,b')
 
 instance QType a => QType (Maybe a) where
     toQuery Nothing = ASTNothing
