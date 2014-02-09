@@ -1,1 +1,5 @@
 .*.sw[spqrst]
+*.hi
+*.o
+dist
+
